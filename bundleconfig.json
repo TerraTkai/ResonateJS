@@ -1,0 +1,22 @@
+[
+  {
+    "outputFileName": "wwwroot/resonate.min.js",
+    "inputFiles": [
+      "core/resonate.initialize.js",
+      "core/resonate.extensions.js",
+      "core/resonate.modules.js",
+      "core/resonate.expressions.js",
+      "core/resonate.rendering.js",
+      "core/resonate.js",
+      "core/components/*.js",
+      "core/attributes/*.js",
+      "core/services/*.js",
+      "core/expressions/*.js",
+      "core/resonate.finalize.js"
+    ],
+    "minify": {
+      "enabled": true,
+      "renameLocals": true
+    }
+  }
+]
