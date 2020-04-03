@@ -15,7 +15,7 @@
             this.splice(0, this.length);
         };
 
-        var ArrayTracking = function (array) {
+        var ArrayTracking = function (array, evaluateValues) {
             if (!array.tracking) {
                 array.tracking = [];
             }
@@ -26,12 +26,13 @@
             self.changed = true;
 
             var execute = function (func, args, xFunc, xArgs) {
+                array.suppress = true;
+
                 for (var i = 0; i < tracking.length; i++) {
                     xFunc.apply(this, [tracking[i], xArgs]);
                     tracking[i].changed = true;
                 }
 
-                array.suppress = true;
                 var result = func.apply(array, args);
                 array.suppress = false;
                 return result;
@@ -39,12 +40,14 @@
 
             if (tracking.length === 0) {
 
-                var push = function (tracker) {
-                    tracker.i.push(-1);
+                var push = function (tracker, args) {
+                    for(var i = 0; i < args.length; i++) {
+                        tracker.i.push(-1);
+                    }
                 };
 
                 array.push = function () {
-                    return execute(proto.push, arguments, push);
+                    return execute(proto.push, arguments, push, arguments);
                 };
 
                 var pop = function (tracker) {
@@ -71,16 +74,25 @@
                     return execute(proto.shift, arguments, shift);
                 };
 
-                var unshift = function (tracker) {
-                    tracker.i.unshift(-1);
+                var unshift = function (tracker, args) {
+                    for (var i = 0; i < args.length; i++) {
+                        tracker.i.unshift(-1);
+                    }
                 };
 
                 array.unshift = function () {
-                    return execute(proto.unshift, arguments, unshift);
+                    return execute(proto.unshift, arguments, unshift, arguments);
                 };
 
                 var copyWithin = function (tracker, args) {
+                    var copy = tracker.i.slice(0);
                     proto.copyWithin.apply(tracker.i, args);
+
+                    for (var i = 0; i < copy.length; i++) {
+                        if (tracker.i.indexOf(copy[i]) === -1 && copy[i] >= 0) {
+                            tracker.d.push(copy[i]);
+                        }
+                    }
                 };
 
                 array.copyWithin = function () {
@@ -99,7 +111,9 @@
                     var deleted = proto.splice.apply(tracker.i, args);
 
                     for (var i = 0; i < deleted.length; i++) {
-                        tracker.d.push(deleted[i]);
+                        if (deleted[i] >= 0) {
+                            tracker.d.push(deleted[i]);
+                        }
                     }
                 };
 
@@ -128,6 +142,8 @@
                     var sortFunc = null;
                     var i = 0;
                     var args = arguments;
+
+                    array.suppress = true;
 
                     for (i = 0; i < array.length; i++) {
                         sortOrder.push({ i: i, v: (args.length > 0 || array[i] === undefined || typeof array[i] === 'string') ? array[i] : array[i].toString() });
@@ -161,14 +177,27 @@
                         array[i] = mirror[sortOrder[i].i];
                     }
 
+                    array.suppress = false;
+
                     return array;
                 };
 
-                array.markChange = function (index) {
+                array.markChange = function (index, value) {
                     if (!array.suppress) {
                         for (var i = 0; i < tracking.length; i++) {
-                            tracking[i].i[index] = -2;
-                            tracking[i].changed = true;
+                            var current = tracking[i];
+                            if (!current.v) {
+                                current.eval();
+                            }
+
+                            var origin = current.v.indexOf(value);
+                            if (origin === -1) {
+                                origin--;
+                            }
+
+                            current.d.push(current.i[index]);
+                            current.i[index] = origin;
+                            current.changed = true;
                         }
                     }
                 };
@@ -176,8 +205,13 @@
 
             tracking.push(self);
 
+            self.eval = function () {
+                self.v = evaluateValues();
+            };
+
             self.cancel = function () {
                 tracking.remove(self);
+
                 if (tracking.length === 0) {
                     delete array.push;
                     delete array.pop;
@@ -191,23 +225,36 @@
                 }
             };
 
-            self.changes = function (existing, itemName) {
+            self.changes = function () {
                 var i = 0;
                 var itemIndex = 0;
 
                 if (self.i && !array.isBindable) {
+                    if (!self.v) self.eval();
                     for (i = 0; i < self.i.length; i++) {
                         itemIndex = self.i[i];
-                        if (itemIndex >= 0 && array[i] !== existing[itemIndex].resonate.s[itemName]) {
-                            array.markChange(itemIndex);
+                        if (itemIndex >= 0 && array[i] !== self.v[itemIndex]) {
+                            array.markChange(i, array[i]);
                         }
                     }
                 }
 
                 if (self.changed) {
+                    if (self.d) {
+                        self.d.sortNumeric();
+
+                        for (i = 0; i < self.d.length; i++) {
+                            if (self.d[i] === self.d[i + 1] || self.i.indexOf(self.d[i]) !== -1) {
+                                self.d.splice(i, 1);
+                                i--;
+                            }
+                        }
+                    }
+
                     var result = { indexes: self.i, deleted: self.d };
                     self.i = [];
                     self.d = [];
+                    self.v = null;
 
                     for (i = 0; i < array.length; i++) {
                         self.i.push(i);
@@ -221,8 +268,16 @@
             self.changes();
         };
 
-        proto.track = function () {
-            return new ArrayTracking(this);
+        proto.track = function (evaluateValues) {
+            return new ArrayTracking(this, evaluateValues);
+        };
+
+        var sortNumeric = function (numA, numB) {
+            return numA > numB ? 1 : numB > numA ? -1 : 0;
+        };
+
+        proto.sortNumeric = function () {
+            this.sort(sortNumeric);
         };
 
     })();
@@ -241,7 +296,10 @@
 
             var operation = {
                 set: function (obj, prop, value) {
-                    if (!obj.suppress && !isNaN(prop) && obj.markChange) obj.markChange(parseInt(prop));
+                    if (!obj.suppress && !isNaN(prop) && obj.markChange) {
+                        obj.markChange(parseInt(prop), value);
+                    }
+
                     obj[prop] = value;
                     return true;
                 },

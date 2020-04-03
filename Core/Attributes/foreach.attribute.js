@@ -21,12 +21,23 @@
         var i = 0;
         var insertAt = attribute.insertAt;
 
+        var evaluateValues = function () {
+            var values = [];
+            for (i = 0; i < itemElements.length; i++) {
+                values.push(itemElements[i].resonate.s[itemName]);
+            }
+
+            return values;
+        };
+
         var createItem = function (item, index, position) {
             var state = Object.create(element.resonate.s);
             state[itemName] = item;
             state['$index'] = index;
-            content.insert(element, itemTemplate, position + 1, state);
-            itemElements.push(element.childNodes[position + 1]);
+            content.insert(element, itemTemplate, position, state);
+            item = element.childNodes[position];
+            itemElements.push(item);
+            return item;
         };
 
         var update = function () {
@@ -44,11 +55,12 @@
                 cleanup.push(existing[i]);
             }
 
+            existing = null;
             itemElements = [];
-            tracking = items.track();
+            tracking = items.track(evaluateValues);
 
             for (i = 0; i < items.length; i++) {
-                createItem(items[i], i, i + indexOffset);
+                createItem(items[i], i, i + indexOffset + 1);
             }
 
             content.cleanup(cleanup);
@@ -57,56 +69,60 @@
         var evaluate = function () {
             if (tracking) {
                 var changes = tracking.changes(itemElements, itemName);
+
                 if (changes) {
                     indexOffset = insertAt.getIndex();
                     indexes = changes.indexes;
                     deleted = changes.deleted;
                     existing = itemElements;
                     itemElements = [];
+                    cleanup = [];
 
                     var offset = 0;
-                    for (i = 0; i < indexes.length; i++) {
-                        var position = offset + i;
+                    var existingIndex = 0;
+                    var lastAdded = insertAt;
 
-                        if (indexes[i] === -2) {
-                            item = existing[i];
-                            content.remove(item, true);
-                            cleanup.push(item);
-                            offset++;
-                        }
-
-                        if (indexes[i] < 0) {
-                            createItem(items[i], i, position + indexOffset);
-                            offset--;
-                        }
-                        else if (indexes[i] >= position) {
-                            for (var j = position; j < indexes[i]; j++) {
-                                var parent = existing[j].parentElement;
-                                if (parent) parent.removeChild(existing[j]);
-                                offset++;
-                            }
-
-                            item = existing[indexes[i]];
-                            item.resonate.s['$index'] = i;
-                            itemElements.push(item);
-                        }
-                        else {
-                            item = existing[indexes[i]];
-                            item.resonate.s['$index'] = i;
-                            element.insertAt(item, i + indexOffset + 1);
-                            itemElements.push(item);
-                            offset--;
-                        }
-                    }
-
-                    cleanup = [];
                     for (i = 0; i < deleted.length; i++) {
                         item = existing[deleted[i]];
                         content.remove(item, true);
                         cleanup.push(item);
                     }
 
+                    for (i = 0; i < indexes.length; i++) {
+                        existingIndex = indexes[i];
+
+                        item = existing[existingIndex];
+
+                        if (existingIndex < 0 || !item) {
+                            lastAdded = createItem(items[i], i, indexOffset + i + 1);
+                            offset--;
+                        }
+                        else {
+                            if (existingIndex - i - offset !== 0 && item !== lastAdded.nextSibling) {
+                                lastAdded = element.insertBefore(item, lastAdded.nextSibling);
+                            }
+                            else {
+                                var find = lastAdded.nextSibling;
+                                while (find && find !== item) {
+                                    var temp = find.nextSibling;
+                                    element.removeChild(find);
+                                    find = temp;
+                                }
+
+                                lastAdded = item;
+                            }
+
+                            item.resonate.s['$index'] = i;
+                            existing[existingIndex] = null;
+                            itemElements.push(item);
+                        }
+                    }
+
                     content.cleanup(cleanup);
+                    existing = null;
+                    deleted = null;
+                    indexes = null;
+                    item = null;
                 }
             }
         };
